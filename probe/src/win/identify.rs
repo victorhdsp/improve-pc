@@ -89,14 +89,29 @@ struct LogicalDisk {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(rename = "Win32_NetworkAdapter")]
+#[serde(rename = "MSFT_NetworkAdapter")]
 #[serde(rename_all = "PascalCase")]
-struct NetworkAdapter {
-    net_connection_id: Option<String>,
-    adapter_type: Option<String>,
-    speed: Option<u64>,
-    physical_adapter: Option<bool>,
-    net_enabled: Option<bool>,
+struct MsftNetworkAdapter {
+    name: Option<String>,
+    media_type: Option<String>,
+    physical_media_type: Option<String>,
+    full_speed: Option<u64>,
+    enabled: Option<bool>,
+}
+
+fn classificar_rede(physical: &Option<String>, media: &Option<String>) -> &'static str {
+    let up = |s: &Option<String>| s.as_deref().unwrap_or("").to_uppercase();
+    let p = up(physical);
+    let m = up(media);
+    if p.contains("802.11") || p.contains("WIRELESS") {
+        "Wi-Fi"
+    } else if p.contains("BLUETOOTH") {
+        "Bluetooth"
+    } else if p.contains("802.3") || m.contains("802.3") {
+        "Cabo (Ethernet)"
+    } else {
+        "?"
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -228,23 +243,29 @@ pub fn report() {
     }
 
     println!("\n--- rede e energia ---");
-    match con.query::<NetworkAdapter>() {
-        Ok(v) => {
-            let fisicos: Vec<_> = v.iter().filter(|a| a.physical_adapter == Some(true)).collect();
-            if fisicos.is_empty() {
-                println!("rede: nenhum adaptador físico listado");
+    match WMIConnection::with_namespace_path("ROOT\\StandardCimv2") {
+        Ok(con2) => match con2.query::<MsftNetworkAdapter>() {
+            Ok(v) => {
+                let fisicos: Vec<_> = v
+                    .iter()
+                    .filter(|a| a.physical_media_type.is_some() || a.media_type.is_some())
+                    .collect();
+                if fisicos.is_empty() {
+                    println!("rede: nenhum adaptador físico listado");
+                }
+                for a in fisicos {
+                    println!(
+                        "rede: {:?} | {} | link {} | {}",
+                        a.name,
+                        classificar_rede(&a.physical_media_type, &a.media_type),
+                        fmt_link_bps(a.full_speed),
+                        if a.enabled == Some(true) { "ativo" } else { "inativo" }
+                    );
+                }
             }
-            for a in fisicos {
-                println!(
-                    "rede: {:?} | {:?} | link {} | {}",
-                    a.net_connection_id,
-                    a.adapter_type,
-                    fmt_link_bps(a.speed),
-                    if a.net_enabled == Some(true) { "ativo" } else { "inativo" }
-                );
-            }
-        }
-        Err(e) => println!("  [falha Win32_NetworkAdapter: {e:?}]"),
+            Err(e) => println!("  [falha MSFT_NetworkAdapter: {e:?}]"),
+        },
+        Err(e) => println!("  [falha namespace StandardCimv2: {e:?}]"),
     }
     match con.query::<Battery>() {
         Ok(v) if !v.is_empty() => {
@@ -256,10 +277,11 @@ pub fn report() {
                     Some((false, _)) => "na bateria",
                     None => "estado: ?",
                 };
-                println!(
-                    "bateria: {:?}% | {} | status WMI: {:?}",
-                    b.estimated_charge_remaining, estado, b.battery_status
-                );
+                let pct = match b.estimated_charge_remaining {
+                    Some(p) if p > 0 => format!("{p}%"),
+                    _ => "n/d (driver não reporta)".into(),
+                };
+                println!("bateria: {} | {} | status WMI: {:?}", pct, estado, b.battery_status);
             }
         }
         Ok(_) => println!("bateria: nenhuma (desktop)"),
