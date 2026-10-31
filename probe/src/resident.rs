@@ -31,10 +31,7 @@ struct Sample {
     gpu: Option<u8>,
 }
 
-pub fn run(install: bool) {
-    #[cfg(not(windows))]
-    let _ = install;
-
+pub fn run() {
     println!("\n# LOOP — monitor residente (Ctrl+C para sair)");
     println!(
         "limites: ram ≥ {RAM_LIMIT}% | cpu ≥ {CPU_LIMIT}% | temp ≥ {TEMP_HIGH}°C (crítico {TEMP_CRIT}°C) | janela {WINDOW}s"
@@ -67,8 +64,8 @@ pub fn run(install: bool) {
     #[cfg(windows)]
     let mut msr = match win::msr::MsrCpu::open(&vendor, cores) {
         Ok(m) => Some(m),
-        Err(e) if install => {
-            println!("driver ausente ({e:?}); tentando instalar...");
+        Err(e) if win::admin::is_elevated() => {
+            println!("driver ausente ({e:?}); instalando (sessão elevada)...");
             let _ = msr_driver_rs::MsrDriver::install();
             win::msr::MsrCpu::open(&vendor, cores).ok()
         }
