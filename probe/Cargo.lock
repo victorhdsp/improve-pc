@@ -672,6 +672,7 @@ dependencies = [
  "msr-driver-rs",
  "serde",
  "sysinfo",
+ "windows-sys 0.61.2",
  "wmi 0.18.4",
 ]
 

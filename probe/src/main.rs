@@ -17,6 +17,12 @@ fn main() {
 
     let install_driver = std::env::args().any(|a| a == "--install-driver");
 
+    #[cfg(windows)]
+    println!(
+        "elevação: {}",
+        if win::admin::is_elevated() { "ADMIN" } else { "usuário comum" }
+    );
+
     let (vendor_id, cores) = live::report();
     board::report();
     gpu::report();
@@ -26,6 +32,7 @@ fn main() {
     #[cfg(windows)]
     {
         win::identify::report();
+        win::identify::usage_report();
         win::msr_probe::report(&vendor_id, cores, install_driver);
     }
 

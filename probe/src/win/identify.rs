@@ -78,6 +78,23 @@ struct LhmSensor {
     sensor_type: Option<String>,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename = "Win32_LogicalDisk")]
+#[serde(rename_all = "PascalCase")]
+struct LogicalDisk {
+    device_id: Option<String>,
+    drive_type: Option<u32>,
+    size: Option<u64>,
+    free_space: Option<u64>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename = "Win32_PerfFormattedData_GPUEngine")]
+#[serde(rename_all = "PascalCase")]
+struct GpuEngine {
+    utilization_percentage: Option<u32>,
+}
+
 pub fn report() {
     println!("\n=== IDENTIFICAÇÃO (WMI) ===");
     let con = match WMIConnection::new() {
@@ -158,8 +175,7 @@ pub fn report() {
         Err(e) => println!("  [falha Win32_DiskDrive: {e:?}]"),
     }
 
-    println!("\n--- namespaces de monitor externo (fallback de temps) ---");
-    for ns in ["ROOT\\OpenHardwareMonitor", "ROOT\\LibreHardwareMonitor"] {
+    println!("\n--- namespaces de monitor externo (fallback de temps) ---");    for ns in ["ROOT\\OpenHardwareMonitor", "ROOT\\LibreHardwareMonitor"] {
         match WMIConnection::with_namespace_path(ns) {
             Ok(c) => {
                 let sensors: Vec<LhmSensor> = c.query().unwrap_or_default();
@@ -173,5 +189,40 @@ pub fn report() {
             }
             Err(_) => println!("{ns}: não instalado"),
         }
+    }
+}
+
+pub fn usage_report() {
+    println!("\n=== USO ATUAL (perf counters) ===");
+    let con = match WMIConnection::new() {
+        Ok(c) => c,
+        Err(e) => {
+            println!("WMI indisponível: {e:?}");
+            return;
+        }
+    };
+
+    match con.query::<LogicalDisk>() {
+        Ok(v) => {
+            for d in v.iter().filter(|d| d.drive_type == Some(3)) {
+                match (d.device_id.as_deref(), d.size, d.free_space) {
+                    (Some(id), Some(s), Some(f)) if s > 0 => {
+                        let used = ((s - f) as f64 / s as f64) * 100.0;
+                        println!("disco {}: {:.0}% usado ({:.0} GB livres)", id, used, f as f64 / 1e9);
+                    }
+                    (Some(id), _, _) => println!("disco {}: sem info de espaço", id),
+                    _ => {}
+                }
+            }
+        }
+        Err(e) => println!("  [falha Win32_LogicalDisk: {e:?}]"),
+    }
+
+    match con.query::<GpuEngine>() {
+        Ok(v) => {
+            let max = v.iter().filter_map(|e| e.utilization_percentage).max().unwrap_or(0);
+            println!("GPU (pico entre engines): {}%", max);
+        }
+        Err(e) => println!("  [falha Win32_PerfFormattedData_GPUEngine: {e:?}]"),
     }
 }
