@@ -2,6 +2,7 @@ mod board;
 mod disks;
 mod gpu;
 mod live;
+mod resident;
 mod sensors;
 
 #[cfg(windows)]
@@ -16,12 +17,18 @@ fn main() {
     }
 
     let install_driver = std::env::args().any(|a| a == "--install-driver");
+    let loop_mode = std::env::args().any(|a| a == "--loop");
 
     #[cfg(windows)]
     println!(
         "elevação: {}",
         if win::admin::is_elevated() { "ADMIN" } else { "usuário comum" }
     );
+
+    if loop_mode {
+        resident::run(install_driver);
+        return;
+    }
 
     let (vendor_id, cores) = live::report();
     board::report();

@@ -88,13 +88,6 @@ struct LogicalDisk {
     free_space: Option<u64>,
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(rename = "Win32_PerfFormattedData_GPUEngine")]
-#[serde(rename_all = "PascalCase")]
-struct GpuEngine {
-    utilization_percentage: Option<u32>,
-}
-
 pub fn report() {
     println!("\n=== IDENTIFICAÇÃO (WMI) ===");
     let con = match WMIConnection::new() {
@@ -217,12 +210,23 @@ pub fn usage_report() {
         }
         Err(e) => println!("  [falha Win32_LogicalDisk: {e:?}]"),
     }
+}
 
-    match con.query::<GpuEngine>() {
-        Ok(v) => {
-            let max = v.iter().filter_map(|e| e.utilization_percentage).max().unwrap_or(0);
-            println!("GPU (pico entre engines): {}%", max);
-        }
-        Err(e) => println!("  [falha Win32_PerfFormattedData_GPUEngine: {e:?}]"),
+pub fn disks_below(min_free_gb: f64) -> Vec<(String, f64)> {
+    let con = match WMIConnection::new() {
+        Ok(c) => c,
+        Err(_) => return vec![],
+    };
+    match con.query::<LogicalDisk>() {
+        Ok(v) => v
+            .iter()
+            .filter(|d| d.drive_type == Some(3))
+            .filter_map(|d| {
+                let free = d.free_space? as f64 / 1e9;
+                (free < min_free_gb)
+                    .then(|| (d.device_id.clone().unwrap_or_else(|| "?".into()), free))
+            })
+            .collect(),
+        Err(_) => vec![],
     }
 }
