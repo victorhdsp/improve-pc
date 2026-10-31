@@ -4,6 +4,7 @@ mod gpu;
 mod live;
 mod resident;
 mod sensors;
+mod update;
 
 #[cfg(windows)]
 mod win;
@@ -16,12 +17,24 @@ fn main() {
 
     let scan = std::env::args().any(|a| a == "--scan");
     let install_driver = std::env::args().any(|a| a == "--install-driver");
+    let force_update = std::env::args().any(|a| a == "--update");
 
     #[cfg(windows)]
     println!(
-        "elevação: {}",
-        if win::admin::is_elevated() { "ADMIN" } else { "usuário comum" }
+        "elevação: {} | versão {}",
+        if win::admin::is_elevated() { "ADMIN" } else { "usuário comum" },
+        update::versao_atual()
     );
+
+    if force_update {
+        update::check(true);
+        return;
+    }
+
+    if update::check(false) {
+        println!("reiniciando com a nova versão...");
+        self_update::restart::restart();
+    }
 
     if scan {
         println!("# SCAN — o que dá pra ler nesta máquina\n");
