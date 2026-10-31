@@ -1,0 +1,19 @@
+[package]
+name = "probe"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sysinfo = "0.33"
+
+[target.'cfg(windows)'.dependencies]
+ironmonitor = { version = "7.0", default-features = false, features = ["nvidia", "amd"] }
+msr-driver-rs = "1.1"
+serde = { version = "1", features = ["derive"] }
+wmi = "0.18"
+
+[target.'cfg(not(windows))'.dependencies]
+ironmonitor = { version = "7.0", default-features = false, features = ["nvidia", "amd", "intel"] }
+
+[profile.release]
+strip = true
