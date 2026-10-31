@@ -88,6 +88,65 @@ struct LogicalDisk {
     free_space: Option<u64>,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename = "Win32_NetworkAdapter")]
+#[serde(rename_all = "PascalCase")]
+struct NetworkAdapter {
+    net_connection_id: Option<String>,
+    adapter_type: Option<String>,
+    speed: Option<u64>,
+    physical_adapter: Option<bool>,
+    net_enabled: Option<bool>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename = "Win32_Battery")]
+#[serde(rename_all = "PascalCase")]
+struct Battery {
+    estimated_charge_remaining: Option<u16>,
+    battery_status: Option<u16>,
+}
+
+#[repr(C)]
+struct SystemBatteryState {
+    ac_on_line: u8,
+    battery_present: u8,
+    charging: u8,
+    discharging: u8,
+    spare: [u8; 4],
+    rate_mw: u32,
+    capacity_mwh: u32,
+    voltage_mv: u32,
+    charge_rate_mw: u32,
+    discharge_rate_mw: u32,
+    default_alert1: u32,
+    default_alert2: u32,
+    default_alert3: u32,
+}
+
+fn battery_power_state() -> Option<(bool, bool)> {
+    let mut s: SystemBatteryState = unsafe { std::mem::zeroed() };
+    let status = unsafe {
+        windows_sys::Win32::System::Power::CallNtPowerInformation(
+            5,
+            std::ptr::null(),
+            0,
+            &mut s as *mut SystemBatteryState as *mut core::ffi::c_void,
+            std::mem::size_of::<SystemBatteryState>() as u32,
+        )
+    };
+    (status == 0 && s.battery_present != 0).then(|| (s.ac_on_line != 0, s.charging != 0))
+}
+
+fn fmt_link_bps(bps: Option<u64>) -> String {
+    match bps {
+        Some(v) if v >= 1_000_000_000 => format!("{:.1} Gbps", v as f64 / 1e9),
+        Some(v) if v >= 1_000_000 => format!("{:.0} Mbps", v as f64 / 1e6),
+        Some(v) => format!("{v} bps"),
+        None => "?".into(),
+    }
+}
+
 pub fn report() {
     println!("\n=== IDENTIFICAÇÃO (WMI) ===");
     let con = match WMIConnection::new() {
@@ -166,6 +225,45 @@ pub fn report() {
             }
         }
         Err(e) => println!("  [falha Win32_DiskDrive: {e:?}]"),
+    }
+
+    println!("\n--- rede e energia ---");
+    match con.query::<NetworkAdapter>() {
+        Ok(v) => {
+            let fisicos: Vec<_> = v.iter().filter(|a| a.physical_adapter == Some(true)).collect();
+            if fisicos.is_empty() {
+                println!("rede: nenhum adaptador físico listado");
+            }
+            for a in fisicos {
+                println!(
+                    "rede: {:?} | {:?} | link {} | {}",
+                    a.net_connection_id,
+                    a.adapter_type,
+                    fmt_link_bps(a.speed),
+                    if a.net_enabled == Some(true) { "ativo" } else { "inativo" }
+                );
+            }
+        }
+        Err(e) => println!("  [falha Win32_NetworkAdapter: {e:?}]"),
+    }
+    match con.query::<Battery>() {
+        Ok(v) if !v.is_empty() => {
+            let pwr = battery_power_state();
+            for b in &v {
+                let estado = match pwr {
+                    Some((true, true)) => "na tomada, carregando",
+                    Some((true, false)) => "na tomada",
+                    Some((false, _)) => "na bateria",
+                    None => "estado: ?",
+                };
+                println!(
+                    "bateria: {:?}% | {} | status WMI: {:?}",
+                    b.estimated_charge_remaining, estado, b.battery_status
+                );
+            }
+        }
+        Ok(_) => println!("bateria: nenhuma (desktop)"),
+        Err(e) => println!("  [falha Win32_Battery: {e:?}]"),
     }
 
     println!("\n--- namespaces de monitor externo (fallback de temps) ---");    for ns in ["ROOT\\OpenHardwareMonitor", "ROOT\\LibreHardwareMonitor"] {

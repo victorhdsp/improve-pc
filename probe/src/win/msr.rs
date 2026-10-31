@@ -10,6 +10,7 @@ const INTEL_RAPL_POWER_UNIT: u32 = 0x606;
 const AMD_PKG_ENERGY: u32 = 0xC001_029B;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum OpenError {
     Driver(msr_driver_rs::Error),
     TemperatureTarget(msr_driver_rs::Error),
