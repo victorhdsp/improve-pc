@@ -19,8 +19,10 @@ const RAM_LIMIT: f32 = 85.0;
 const CPU_LIMIT: f32 = 90.0;
 const TEMP_HIGH: f32 = 85.0;
 const TEMP_CRIT: f32 = 92.0;
+#[cfg(windows)]
 const DISK_FREE_MIN_GB: f64 = 10.0;
 
+#[allow(dead_code)]
 struct Sample {
     cpu: f32,
     ram: f32,
