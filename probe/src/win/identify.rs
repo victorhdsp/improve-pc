@@ -7,7 +7,7 @@ use wmi::WMIConnection;
 struct ComputerSystem {
     manufacturer: Option<String>,
     model: Option<String>,
-    total_physical_memory: Option<String>,
+    total_physical_memory: Option<u64>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -44,7 +44,7 @@ struct Processor {
 struct PhysicalMemory {
     manufacturer: Option<String>,
     part_number: Option<String>,
-    capacity: Option<String>,
+    capacity: Option<u64>,
     speed: Option<u32>,
     configured_clock_speed: Option<u32>,
     device_locator: Option<String>,
@@ -56,7 +56,7 @@ struct PhysicalMemory {
 struct VideoController {
     name: Option<String>,
     driver_version: Option<String>,
-    adapter_ram: Option<String>,
+    adapter_ram: Option<u32>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -64,7 +64,7 @@ struct VideoController {
 #[serde(rename_all = "PascalCase")]
 struct DiskDrive {
     model: Option<String>,
-    size: Option<String>,
+    size: Option<u64>,
     interface_type: Option<String>,
     media_type: Option<String>,
 }
@@ -88,50 +88,74 @@ pub fn report() {
         }
     };
 
-    if let Ok(v) = con.query::<ComputerSystem>() {
-        for s in &v {
-            println!(
-                "sistema: {:?} {:?} | RAM total: {:?} bytes",
-                s.manufacturer, s.model, s.total_physical_memory
-            );
+    match con.query::<ComputerSystem>() {
+        Ok(v) => {
+            for s in &v {
+                println!(
+                    "sistema: {:?} {:?} | RAM total: {:?} bytes",
+                    s.manufacturer, s.model, s.total_physical_memory
+                );
+            }
         }
+        Err(e) => println!("  [falha Win32_ComputerSystem: {e:?}]"),
     }
-    if let Ok(v) = con.query::<BaseBoard>() {
-        for b in &v {
-            println!("placa-mãe: {:?} {:?} (versão {:?})", b.manufacturer, b.product, b.version);
+    match con.query::<BaseBoard>() {
+        Ok(v) => {
+            for b in &v {
+                println!("placa-mãe: {:?} {:?} (versão {:?})", b.manufacturer, b.product, b.version);
+            }
         }
+        Err(e) => println!("  [falha Win32_BaseBoard: {e:?}]"),
     }
-    if let Ok(v) = con.query::<Bios>() {
-        for b in &v {
-            println!("BIOS: {:?} {:?}", b.manufacturer, b.version);
+    match con.query::<Bios>() {
+        Ok(v) => {
+            for b in &v {
+                println!("BIOS: {:?} {:?}", b.manufacturer, b.version);
+            }
         }
+        Err(e) => println!("  [falha Win32_BIOS: {e:?}]"),
     }
-    if let Ok(v) = con.query::<Processor>() {
-        for p in &v {
-            println!(
-                "CPU: {:?} ({:?}) | {:?} núcleos / {:?} threads | {:?} MHz",
-                p.name, p.manufacturer, p.number_of_cores, p.number_of_logical_processors, p.max_clock_speed
-            );
+    match con.query::<Processor>() {
+        Ok(v) => {
+            for p in &v {
+                println!(
+                    "CPU: {:?} ({:?}) | {:?} núcleos / {:?} threads | {:?} MHz",
+                    p.name, p.manufacturer, p.number_of_cores, p.number_of_logical_processors, p.max_clock_speed
+                );
+            }
         }
+        Err(e) => println!("  [falha Win32_Processor: {e:?}]"),
     }
-    if let Ok(v) = con.query::<PhysicalMemory>() {
-        println!("RAM ({} pente(s)):", v.len());
-        for m in &v {
-            println!(
-                "  slot {:?}: {:?} {:?} | {:?} bytes | {:?} MHz (config {:?} MHz)",
-                m.device_locator, m.manufacturer, m.part_number, m.capacity, m.speed, m.configured_clock_speed
-            );
+    match con.query::<PhysicalMemory>() {
+        Ok(v) => {
+            println!("RAM ({} pente(s)):", v.len());
+            for m in &v {
+                println!(
+                    "  slot {:?}: {:?} {:?} | {:?} bytes | {:?} MHz (config {:?} MHz)",
+                    m.device_locator, m.manufacturer, m.part_number, m.capacity, m.speed, m.configured_clock_speed
+                );
+            }
+            if v.is_empty() {
+                println!("  (nenhum pente listado — RAM provavelmente soldada)");
+            }
         }
+        Err(e) => println!("  [falha Win32_PhysicalMemory: {e:?}]"),
     }
-    if let Ok(v) = con.query::<VideoController>() {
-        for g in &v {
-            println!("GPU: {:?} (driver {:?}, VRAM {:?} bytes)", g.name, g.driver_version, g.adapter_ram);
+    match con.query::<VideoController>() {
+        Ok(v) => {
+            for g in &v {
+                println!("GPU: {:?} (driver {:?}, VRAM {:?} bytes)", g.name, g.driver_version, g.adapter_ram);
+            }
         }
+        Err(e) => println!("  [falha Win32_VideoController: {e:?}]"),
     }
-    if let Ok(v) = con.query::<DiskDrive>() {
-        for d in &v {
-            println!("disco: {:?} | {:?} bytes | {:?} / {:?}", d.model, d.size, d.interface_type, d.media_type);
+    match con.query::<DiskDrive>() {
+        Ok(v) => {
+            for d in &v {
+                println!("disco: {:?} | {:?} bytes | {:?} / {:?}", d.model, d.size, d.interface_type, d.media_type);
+            }
         }
+        Err(e) => println!("  [falha Win32_DiskDrive: {e:?}]"),
     }
 
     println!("\n--- namespaces de monitor externo (fallback de temps) ---");

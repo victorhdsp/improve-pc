@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use msr_driver_rs::MsrDriver;
 
-const INTEL_PLATFORM_INFO: u32 = 0xCE;
+const INTEL_TEMPERATURE_TARGET: u32 = 0x1A2;
 const INTEL_THERM_STATUS: u32 = 0x19C;
 const INTEL_PKG_THERM_STATUS: u32 = 0x1B2;
 const INTEL_PKG_ENERGY: u32 = 0x611;
@@ -44,14 +44,16 @@ pub fn report(vendor_id: &str, cores: usize, install: bool) {
 
 fn intel(driver: &MsrDriver, cores: usize) {
     println!("vendor: Intel");
-    let tjmax: u32 = match driver.read_msr(INTEL_PLATFORM_INFO, 0) {
-        Ok(v) => ((v >> 16) & 0xFF) as u32,
+    let target: u64 = match driver.read_msr(INTEL_TEMPERATURE_TARGET, 0) {
+        Ok(v) => v,
         Err(e) => {
             println!("  TjMax ilegível: {e:?}");
             return;
         }
     };
-    println!("  TjMax: {tjmax} °C");
+    let tjmax = ((target >> 16) & 0xFF) as u32;
+    let tcc_offset = ((target >> 24) & 0xF) as u32;
+    println!("  TjMax: {tjmax} °C | crítico: {} °C", tjmax.saturating_sub(tcc_offset));
 
     let mut shown = 0;
     for core in 0..cores as u32 {

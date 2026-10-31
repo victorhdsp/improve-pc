@@ -6,6 +6,7 @@ pub fn report() {
         Ok(g) => g,
         Err(e) => {
             println!("indisponível: {e:?}");
+            println!("  (o nome do modelo aparece na seção WMI abaixo)");
             return;
         }
     };
