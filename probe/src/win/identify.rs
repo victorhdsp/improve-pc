@@ -350,3 +350,133 @@ pub fn disks_below(min_free_gb: f64) -> Vec<(String, f64)> {
         Err(_) => vec![],
     }
 }
+
+use crate::ident::Identificacao;
+
+pub fn resumo() -> Identificacao {
+    let mut id = Identificacao {
+        board: "—".into(),
+        bios: "—".into(),
+        cpu: "—".into(),
+        ram: "—".into(),
+        gpu: "—".into(),
+        disco: "—".into(),
+        disco_uso: "—".into(),
+        rede: Vec::new(),
+        bateria: "—".into(),
+    };
+
+    if let Ok(info) = ironmonitor::motherboard::get_system_info() {
+        id.board = format!(
+            "{} {}",
+            info.board_vendor.as_deref().unwrap_or("?"),
+            info.board_name.as_deref().unwrap_or("?")
+        );
+        id.bios = format!(
+            "{} {} ({})",
+            info.bios.vendor.as_deref().unwrap_or("?"),
+            info.bios.version.as_deref().unwrap_or("?"),
+            info.bios.firmware_type
+        );
+    }
+
+    {
+        let mut sys = sysinfo::System::new();
+        sys.refresh_cpu_usage();
+        if let Some(c) = sys.cpus().first() {
+            id.cpu = format!("{} ({} threads)", c.brand().trim(), sys.cpus().len());
+        }
+    }
+
+    if let Ok(gpus) = ironmonitor::gpu::GpuCollection::auto_detect() {
+        if let Ok(list) = gpus.snapshot_all() {
+            if let Some(g) = list.first() {
+                id.gpu = g.static_info.name.clone();
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        if let Ok(con) = WMIConnection::new() {
+            if let Ok(v) = con.query::<PhysicalMemory>() {
+                let n = v.len();
+                let total_gb: f64 = v
+                    .iter()
+                    .filter_map(|m| m.capacity)
+                    .sum::<u64>() as f64
+                    / 1_073_741_824.0;
+                let parte = v.first().and_then(|m| m.part_number.clone()).unwrap_or_default();
+                let pn = parte.trim();
+                let velocidade = v.first().and_then(|m| m.configured_clock_speed);
+                id.ram = format!(
+                    "{n} chip(s) somando {:.0} GB {}{}",
+                    total_gb,
+                    if pn.is_empty() { String::new() } else { format!("({pn}) ") },
+                    velocidade.map(|v| format!("@ {v} MHz")).unwrap_or_default()
+                );
+            }
+            if let Ok(v) = con.query::<LogicalDisk>() {
+                let linhas: Vec<String> = v
+                    .iter()
+                    .filter(|d| d.drive_type == Some(3))
+                    .filter_map(|d| {
+                        let (dev, s, f) = (d.device_id.as_deref()?, d.size?, d.free_space?);
+                        if s == 0 {
+                            return None;
+                        }
+                        Some(format!("{dev} {:.0}% usado ({:.0} GB livres)", (s - f) as f64 / s as f64 * 100.0, f as f64 / 1e9))
+                    })
+                    .collect();
+                if !linhas.is_empty() {
+                    id.disco_uso = linhas.join(" | ");
+                }
+            }
+            if let Ok(con2) = WMIConnection::with_namespace_path("ROOT\\StandardCimv2") {
+                if let Ok(v) = con2.query::<MsftNetworkAdapter>() {
+                    for a in v.iter().filter(|a| a.physical_media_type.is_some() || a.media_type.is_some()) {
+                        id.rede.push((
+                            a.name.clone().unwrap_or_else(|| "?".into()),
+                            format!(
+                                "{} | {} | {}",
+                                classificar_rede(&a.physical_media_type, &a.media_type),
+                                fmt_link_bps(a.full_speed),
+                                if a.enabled == Some(true) { "ativo" } else { "inativo" }
+                            ),
+                        ));
+                    }
+                }
+            }
+            if let Ok(v) = con.query::<Battery>() {
+                if let Some(b) = v.first() {
+                    let pct = match b.estimated_charge_remaining {
+                        Some(p) if p > 0 => format!("{p}%"),
+                        _ => "n/d".into(),
+                    };
+                    let estado = match battery_power_state() {
+                        Some((true, true)) => "na tomada, carregando",
+                        Some((true, false)) => "na tomada",
+                        Some((false, _)) => "na bateria",
+                        None => "estado ?",
+                    };
+                    id.bateria = format!("{pct} | {estado}");
+                } else {
+                    id.bateria = "nenhuma (desktop)".into();
+                }
+            }
+        }
+        if let Ok(devs) = ironmonitor::disk::enumerate_disks() {
+            if let Some(d) = devs.first() {
+                if let Ok(i) = d.info() {
+                    id.disco = format!(
+                        "{} ({:.0} GB)",
+                        i.model.as_deref().unwrap_or("?"),
+                        i.capacity.map(|c| c as f64 / 1_073_741_824.0).unwrap_or(0.0)
+                    );
+                }
+            }
+        }
+    }
+
+    id
+}

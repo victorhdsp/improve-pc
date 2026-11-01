@@ -1,11 +1,13 @@
 mod board;
 mod disks;
 mod gpu;
+mod gui;
+mod ident;
 mod live;
+mod monitor;
 mod resident;
 mod sensors;
 mod update;
-
 #[cfg(windows)]
 mod win;
 
@@ -16,8 +18,8 @@ fn main() {
     }
 
     let scan = std::env::args().any(|a| a == "--scan");
+    let console = std::env::args().any(|a| a == "--console");
     let install_driver = std::env::args().any(|a| a == "--install-driver");
-    let force_update = std::env::args().any(|a| a == "--update");
 
     #[cfg(windows)]
     println!(
@@ -26,14 +28,14 @@ fn main() {
         update::versao_atual()
     );
 
-    if force_update {
+    if std::env::args().any(|a| a == "--update") {
         update::check(true);
         return;
     }
 
     if update::check(false) {
         println!("reiniciando com a nova versão...");
-        self_update::restart::restart();
+        let _ = self_update::restart::restart();
     }
 
     if scan {
@@ -59,5 +61,17 @@ fn main() {
         return;
     }
 
-    resident::run();
+    if console {
+        resident::run();
+        return;
+    }
+
+    #[cfg(windows)]
+    let ident = win::identify::resumo();
+    #[cfg(not(windows))]
+    let ident = ident::Identificacao::default();
+    if let Err(e) = gui::run(ident) {
+        eprintln!("falha ao abrir a janela: {e}");
+        eprintln!("use --console para o modo terminal");
+    }
 }
