@@ -16,11 +16,74 @@ const USO: Color32 = Color32::from_rgb(70, 140, 210);
 const TEXTO: Color32 = Color32::from_rgb(222, 224, 230);
 const TEXTO_FRACO: Color32 = Color32::from_rgb(150, 154, 164);
 
-const ESTADOS: &[&[u8]] = &[
-    include_bytes!("../../assets/board_limpa.png"),
-    include_bytes!("../../assets/board_cpu.png"),
-    include_bytes!("../../assets/board_cpu_ram.png"),
+const CAMADAS: &[(&str, Componente)] = &[
+    ("board_base.png", Componente::Placa),
+    ("layer_cpu.png", Componente::Cpu),
+    ("layer_ram.png", Componente::Ram),
+    ("layer_gpu.png", Componente::Gpu),
+    ("layer_m2.png", Componente::Disco),
 ];
+
+fn pasta_assets() -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(p) = exe.parent() {
+            dirs.push(p.join("assets"));
+        }
+    }
+    dirs.push(std::path::PathBuf::from("assets"));
+    dirs.push(std::path::PathBuf::from("../assets"));
+    dirs
+}
+
+struct Camada {
+    tex: egui::TextureHandle,
+    bbox: Rect,
+    componente: Componente,
+}
+
+fn carregar_camadas(ctx: &egui::Context) -> Vec<Camada> {
+    let dirs = pasta_assets();
+    let mut out = Vec::new();
+    for (arquivo, componente) in CAMADAS {
+        let Some(caminho) = dirs.iter().map(|d| d.join(arquivo)).find(|c| c.exists()) else {
+            continue;
+        };
+        let Ok(bytes) = std::fs::read(&caminho) else { continue };
+        let Ok(img) = image::load_from_memory(&bytes) else { continue };
+        let img = img.to_rgba8();
+        let (w, h) = (img.width() as f32, img.height() as f32);
+        let mut bbox: Option<(u32, u32, u32, u32)> = None;
+        for (x, y, px) in img.enumerate_pixels() {
+            if px.0[3] > 16 {
+                bbox = Some(match bbox {
+                    None => (x, y, x, y),
+                    Some((x0, y0, x1, y1)) => (x0.min(x), y0.min(y), x1.max(x), y1.max(y)),
+                });
+            }
+        }
+        let size = [img.width() as usize, img.height() as usize];
+        let tex = ctx.load_texture(
+            format!("camada_{arquivo}"),
+            egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()),
+            egui::TextureOptions::LINEAR,
+        );
+        let bbox = match bbox {
+            Some((x0, y0, x1, y1)) if *componente != Componente::Placa => Rect::from_min_max(
+                Pos2::new(x0 as f32 / w, y0 as f32 / h),
+                Pos2::new((x1 + 1) as f32 / w, (y1 + 1) as f32 / h),
+            ),
+            _ => Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+        };
+        out.push(Camada { tex, bbox, componente: *componente });
+    }
+    out
+}
+
+fn gpu_e_integrada(nome: &str) -> bool {
+    let n = nome.to_uppercase();
+    n.contains("IRIS") || n.contains("UHD") || n.contains("GRAPHICS")
+}
 
 struct Hotspot {
     componente: Componente,
@@ -63,24 +126,12 @@ struct App {
     upd_status: Arc<Mutex<Option<String>>>,
     upd_rodando: Arc<Mutex<bool>>,
     reiniciar: bool,
-    texturas: Vec<egui::TextureHandle>,
-    inicio: std::time::Instant,
+    camadas: Vec<Camada>,
 }
 
 impl App {
     fn new(ctx: &egui::Context, estado: Shared, ident: Identificacao) -> Self {
-        let texturas = ESTADOS
-            .iter()
-            .filter_map(|bytes| {
-                let img = image::load_from_memory(bytes).ok()?.to_rgba8();
-                let size = [img.width() as usize, img.height() as usize];
-                Some(ctx.load_texture(
-                    "estado_placa",
-                    egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()),
-                    egui::TextureOptions::LINEAR,
-                ))
-            })
-            .collect();
+        let camadas = carregar_camadas(ctx);
         Self {
             estado,
             ident,
@@ -89,8 +140,7 @@ impl App {
             upd_status: Arc::new(Mutex::new(None)),
             upd_rodando: Arc::new(Mutex::new(false)),
             reiniciar: false,
-            texturas,
-            inicio: std::time::Instant::now(),
+            camadas,
         }
     }
 }
@@ -211,58 +261,54 @@ impl App {
         let painter = ui.painter_at(area);
         painter.rect_filled(area, 0.0, FUNDO);
 
-        let Some(tex) = self.texturas.first() else {
+        if self.camadas.is_empty() {
+            self.desenhar_fallback(ui, area, st);
             return;
-        };
-        let ts = tex.size_vec2();
-        let escala = (area.width() / ts.x).min(area.height() / ts.y) * 0.96;
-        let size = ts * escala;
-        let img_rect = Rect::from_center_size(area.center(), size);
-
-        painter.rect_filled(img_rect.expand(6.0), 10.0, CARTAO);
-        painter.image(
-            tex.id(),
-            img_rect,
-            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-            Color32::WHITE,
-        );
-
-        let estados_alvo = ((self.inicio.elapsed().as_millis() as usize / 800) + 1).min(self.texturas.len());
-        if let Some(tex) = self.texturas.get(estados_alvo - 1) {
-            painter.image(
-                tex.id(),
-                img_rect,
-                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                Color32::WHITE,
-            );
         }
 
+        let base = &self.camadas[0];
+        let ts = base.tex.size_vec2();
+        let escala = (area.width() / ts.x).min(area.height() / ts.y) * 0.96;
+        let img_rect = Rect::from_center_size(area.center(), ts * escala);
+        painter.rect_filled(img_rect.expand(6.0), 10.0, CARTAO);
+
+        let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
         let tempo = ui.input(|i| i.time) as f32;
-        for h in HOTSPOTS {
+
+        for (i, cam) in self.camadas.iter().enumerate() {
+            if i > 0 && !self.camada_presente(cam.componente) {
+                continue;
+            }
+            painter.image(cam.tex.id(), img_rect, uv, Color32::WHITE);
+
             let r = Rect::from_min_max(
-                Pos2::new(img_rect.left() + img_rect.width() * h.x0, img_rect.top() + img_rect.height() * h.y0),
-                Pos2::new(img_rect.left() + img_rect.width() * h.x1, img_rect.top() + img_rect.height() * h.y1),
+                Pos2::new(img_rect.left() + img_rect.width() * cam.bbox.left(), img_rect.top() + img_rect.height() * cam.bbox.top()),
+                Pos2::new(img_rect.left() + img_rect.width() * cam.bbox.right(), img_rect.top() + img_rect.height() * cam.bbox.bottom()),
             );
-            let resp = ui.interact(r, egui::Id::new(format!("h_{:?}", h.componente)), Sense::click());
-            let selecionado = self.selecionado == Some(h.componente);
-            if selecionado || resp.hovered() {
-                let cor = if selecionado { SEL } else { Color32::from_rgba_unmultiplied(255, 255, 255, 180) };
-                painter.rect_stroke(r, 6.0, Stroke::new(if selecionado { 2.5_f32 } else { 1.5_f32 }, cor), egui::StrokeKind::Inside);
-            }
+            let selecionado = self.selecionado == Some(cam.componente);
+            let resp = ui.interact(r, egui::Id::new(format!("h_{:?}", cam.componente)), Sense::click());
             if resp.clicked() {
-                self.selecionado = Some(h.componente);
+                self.selecionado = Some(cam.componente);
             }
 
-            if let Some(u) = uso_do(st, h.componente) {
+            if let Some(u) = uso_do(st, cam.componente) {
                 let altura = r.height() * (u / 100.0).clamp(0.03, 1.0);
-                let faixa = Rect::from_min_max(
-                    Pos2::new(r.left(), r.bottom() - altura),
-                    Pos2::new(r.right(), r.bottom()),
+                painter.rect_filled(
+                    Rect::from_min_max(Pos2::new(r.left(), r.bottom() - altura), Pos2::new(r.right(), r.bottom())),
+                    3.0,
+                    USO.gamma_multiply(0.60),
                 );
-                painter.rect_filled(faixa, 3.0, USO.gamma_multiply(0.60));
             }
 
-            if st.ativos.contains(&h.componente) {
+            if selecionado {
+                painter.rect_filled(r, 6.0, SEL.gamma_multiply(0.18));
+                painter.rect_stroke(r, 6.0, Stroke::new(2.5_f32, SEL), egui::StrokeKind::Inside);
+            } else if resp.hovered() {
+                painter.rect_filled(r, 6.0, Color32::from_rgba_unmultiplied(255, 255, 255, 26));
+                painter.rect_stroke(r, 6.0, Stroke::new(1.5_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 170)), egui::StrokeKind::Inside);
+            }
+
+            if st.ativos.contains(&cam.componente) {
                 let centro = Pos2::new(r.right(), r.top());
                 let raio = 10.0 + 2.5 * (tempo * 5.0).sin();
                 painter.circle_filled(centro, raio, ALERTA);
@@ -282,6 +328,46 @@ impl App {
             FontId::proportional(11.0),
             TEXTO_FRACO,
         );
+    }
+
+    fn camada_presente(&self, c: Componente) -> bool {
+        match c {
+            Componente::Cpu | Componente::Ram | Componente::Disco => true,
+            Componente::Gpu => !(self.ident.gpu.is_empty() || gpu_e_integrada(&self.ident.gpu)),
+            _ => false,
+        }
+    }
+
+    fn desenhar_fallback(&mut self, ui: &mut egui::Ui, area: Rect, st: &MonitorState) {
+        let painter = ui.painter_at(area);
+        painter.text(
+            area.center(),
+            Align2::CENTER_CENTER,
+            "coloque os PNGs das camadas na pasta assets/ ao lado do probe.exe",
+            FontId::proportional(13.0),
+            TEXTO_FRACO,
+        );
+        let tempo = ui.input(|i| i.time) as f32;
+        for h in HOTSPOTS {
+            let r = Rect::from_min_max(
+                Pos2::new(area.left() + area.width() * h.x0, area.top() + area.height() * h.y0),
+                Pos2::new(area.left() + area.width() * h.x1, area.top() + area.height() * h.y1),
+            );
+            let selecionado = self.selecionado == Some(h.componente);
+            if selecionado {
+                painter.rect_stroke(r, 6.0, Stroke::new(2.5_f32, SEL), egui::StrokeKind::Inside);
+            }
+            let resp = ui.interact(r, egui::Id::new(format!("f_{:?}", h.componente)), Sense::click());
+            if resp.clicked() {
+                self.selecionado = Some(h.componente);
+            }
+            if st.ativos.contains(&h.componente) {
+                let centro = Pos2::new(r.right(), r.top());
+                let raio = 10.0 + 2.5 * (tempo * 5.0).sin();
+                painter.circle_filled(centro, raio, ALERTA);
+                painter.text(centro, Align2::CENTER_CENTER, "!", FontId::proportional(15.0), Color32::WHITE);
+            }
+        }
     }
 }
 

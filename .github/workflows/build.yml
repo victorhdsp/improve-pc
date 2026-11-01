@@ -27,7 +27,10 @@ jobs:
 
       - name: Package
         shell: pwsh
-        run: Compress-Archive -Path probe/target/release/probe.exe -DestinationPath probe-x86_64-pc-windows-msvc.zip
+        run: |
+          $files = @("probe/target/release/probe.exe")
+          if (Test-Path assets) { $files += (Get-ChildItem assets -Filter *.png | ForEach-Object { $_.FullName }) }
+          Compress-Archive -Path $files -DestinationPath probe-x86_64-pc-windows-msvc.zip
 
       - uses: actions/upload-artifact@v4
         with:
