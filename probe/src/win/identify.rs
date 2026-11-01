@@ -373,7 +373,7 @@ pub fn resumo() -> Identificacao {
             info.board_name.as_deref().unwrap_or("?")
         );
         id.bios = format!(
-            "{} {} ({})",
+            "{} {} ({:?})",
             info.bios.vendor.as_deref().unwrap_or("?"),
             info.bios.version.as_deref().unwrap_or("?"),
             info.bios.firmware_type
@@ -470,7 +470,7 @@ pub fn resumo() -> Identificacao {
                 if let Ok(i) = d.info() {
                     id.disco = format!(
                         "{} ({:.0} GB)",
-                        i.model.as_deref().unwrap_or("?"),
+                        i.model,
                         i.capacity.map(|c| c as f64 / 1_073_741_824.0).unwrap_or(0.0)
                     );
                 }
