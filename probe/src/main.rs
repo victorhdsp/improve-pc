@@ -70,8 +70,17 @@ fn main() {
     let ident = win::identify::resumo();
     #[cfg(not(windows))]
     let ident = ident::Identificacao::default();
-    if let Err(e) = gui::run(ident) {
-        eprintln!("falha ao abrir a janela: {e}");
-        eprintln!("use --console para o modo terminal");
+
+    let resultado = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| gui::run(ident)));
+    match resultado {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            eprintln!("falha ao abrir a janela: {e}");
+        }
+        Err(_) => {
+            eprintln!("erro interno inesperado ao abrir a janela (panic)");
+        }
     }
+    eprintln!("caí para o modo console — Ctrl+C para sair");
+    resident::run();
 }
