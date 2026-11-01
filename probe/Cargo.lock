@@ -3131,10 +3131,11 @@ dependencies = [
 
 [[package]]
 name = "probe"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "eframe",
+ "image",
  "ironmonitor",
  "msr-driver-rs",
  "self_update",

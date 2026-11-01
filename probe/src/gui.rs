@@ -1,4 +1,3 @@
-use std::ops::RangeInclusive;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -10,17 +9,35 @@ use crate::monitor::{self, Componente, MonitorState, Shared};
 use crate::update::{self, ResultadoUpdate};
 
 const FUNDO: Color32 = Color32::from_rgb(22, 24, 30);
-const PLACA: Color32 = Color32::from_rgb(28, 52, 40);
-const PLACA_BORDA: Color32 = Color32::from_rgb(58, 105, 78);
-const TRILHA: Color32 = Color32::from_rgb(46, 84, 62);
-const PECA: Color32 = Color32::from_rgb(50, 54, 64);
-const PECA_HOVER: Color32 = Color32::from_rgb(66, 71, 84);
-const PECA_BORDA: Color32 = Color32::from_rgb(108, 114, 128);
+const CARTAO: Color32 = Color32::from_rgb(244, 245, 248);
 const SEL: Color32 = Color32::from_rgb(240, 200, 60);
 const ALERTA: Color32 = Color32::from_rgb(232, 72, 60);
-const USO: Color32 = Color32::from_rgb(90, 160, 220);
+const USO: Color32 = Color32::from_rgb(70, 140, 210);
 const TEXTO: Color32 = Color32::from_rgb(222, 224, 230);
 const TEXTO_FRACO: Color32 = Color32::from_rgb(150, 154, 164);
+
+const ESTADOS: &[&[u8]] = &[
+    include_bytes!("../../assets/board_limpa.png"),
+    include_bytes!("../../assets/board_cpu.png"),
+    include_bytes!("../../assets/board_cpu_ram.png"),
+];
+
+struct Hotspot {
+    componente: Componente,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+}
+
+const HOTSPOTS: &[Hotspot] = &[
+    Hotspot { componente: Componente::Cpu, x0: 0.31, y0: 0.40, x1: 0.53, y1: 0.66 },
+    Hotspot { componente: Componente::Ram, x0: 0.16, y0: 0.24, x1: 0.52, y1: 0.52 },
+    Hotspot { componente: Componente::Gpu, x0: 0.55, y0: 0.32, x1: 0.84, y1: 0.56 },
+    Hotspot { componente: Componente::Disco, x0: 0.40, y0: 0.60, x1: 0.58, y1: 0.80 },
+    Hotspot { componente: Componente::Bateria, x0: 0.62, y0: 0.35, x1: 0.73, y1: 0.49 },
+    Hotspot { componente: Componente::Rede, x0: 0.64, y0: 0.69, x1: 0.71, y1: 0.80 },
+];
 
 pub fn run(ident: Identificacao) -> Result<(), eframe::Error> {
     let estado: Shared = Arc::new(Mutex::new(MonitorState::default()));
@@ -34,7 +51,7 @@ pub fn run(ident: Identificacao) -> Result<(), eframe::Error> {
     eframe::run_native(
         "Monitor de PC",
         opts,
-        Box::new(move |_cc| Ok(Box::new(App::new(estado.clone(), ident)))),
+        Box::new(move |cc| Ok(Box::new(App::new(&cc.egui_ctx, estado.clone(), ident)))),
     )
 }
 
@@ -46,10 +63,24 @@ struct App {
     upd_status: Arc<Mutex<Option<String>>>,
     upd_rodando: Arc<Mutex<bool>>,
     reiniciar: bool,
+    texturas: Vec<egui::TextureHandle>,
+    inicio: std::time::Instant,
 }
 
 impl App {
-    fn new(estado: Shared, ident: Identificacao) -> Self {
+    fn new(ctx: &egui::Context, estado: Shared, ident: Identificacao) -> Self {
+        let texturas = ESTADOS
+            .iter()
+            .filter_map(|bytes| {
+                let img = image::load_from_memory(bytes).ok()?.to_rgba8();
+                let size = [img.width() as usize, img.height() as usize];
+                Some(ctx.load_texture(
+                    "estado_placa",
+                    egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()),
+                    egui::TextureOptions::LINEAR,
+                ))
+            })
+            .collect();
         Self {
             estado,
             ident,
@@ -58,32 +89,10 @@ impl App {
             upd_status: Arc::new(Mutex::new(None)),
             upd_rodando: Arc::new(Mutex::new(false)),
             reiniciar: false,
+            texturas,
+            inicio: std::time::Instant::now(),
         }
     }
-}
-
-struct Widget {
-    componente: Componente,
-    rotulo: &'static str,
-    rect: Rect,
-}
-
-fn layout(total: Rect) -> (Rect, Vec<Widget>) {
-    let nx = |a: f32, b: f32| total.min.x + total.width() * a..=total.min.x + total.width() * b;
-    let ny = |a: f32, b: f32| total.min.y + total.height() * a..=total.min.y + total.height() * b;
-    let r = |x: (RangeInclusive<f32>, RangeInclusive<f32>)| Rect::from_x_y_ranges(x.0, x.1);
-
-    let placa = r((nx(0.06, 0.94), ny(0.08, 0.94)));
-    let widgets = vec![
-        Widget { componente: Componente::Cpu, rotulo: "CPU", rect: r((nx(0.38, 0.58), ny(0.14, 0.36))) },
-        Widget { componente: Componente::Ram, rotulo: "RAM A", rect: r((nx(0.64, 0.69), ny(0.12, 0.38))) },
-        Widget { componente: Componente::Ram, rotulo: "RAM B", rect: r((nx(0.72, 0.77), ny(0.12, 0.38))) },
-        Widget { componente: Componente::Gpu, rotulo: "GPU", rect: r((nx(0.20, 0.58), ny(0.50, 0.64))) },
-        Widget { componente: Componente::Disco, rotulo: "M.2", rect: r((nx(0.34, 0.58), ny(0.72, 0.80))) },
-        Widget { componente: Componente::Rede, rotulo: "RED", rect: r((nx(0.12, 0.19), ny(0.66, 0.74))) },
-        Widget { componente: Componente::Bateria, rotulo: "BAT", rect: r((nx(0.12, 0.24), ny(0.80, 0.88))) },
-    ];
-    (placa, widgets)
 }
 
 fn uso_do(estado: &MonitorState, c: Componente) -> Option<f32> {
@@ -202,72 +211,73 @@ impl App {
         let painter = ui.painter_at(area);
         painter.rect_filled(area, 0.0, FUNDO);
 
-        let (placa, widgets) = layout(area);
-        painter.rect_filled(placa, 10.0, PLACA);
-        painter.rect_stroke(placa, 10.0, Stroke::new(1.5_f32, PLACA_BORDA), egui::StrokeKind::Inside);
+        let Some(tex) = self.texturas.first() else {
+            return;
+        };
+        let ts = tex.size_vec2();
+        let escala = (area.width() / ts.x).min(area.height() / ts.y) * 0.96;
+        let size = ts * escala;
+        let img_rect = Rect::from_center_size(area.center(), size);
 
-        for trilha in [
-            Rect::from_x_y_ranges(placa.left() + 30.0..=placa.right() - 30.0, placa.top() + 8.0..=placa.top() + 10.0),
-            Rect::from_x_y_ranges(placa.left() + 30.0..=placa.right() - 30.0, placa.bottom() - 10.0..=placa.bottom() - 8.0),
-        ] {
-            painter.rect_filled(trilha, 1.0, TRILHA);
+        painter.rect_filled(img_rect.expand(6.0), 10.0, CARTAO);
+        painter.image(
+            tex.id(),
+            img_rect,
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+            Color32::WHITE,
+        );
+
+        let estados_alvo = ((self.inicio.elapsed().as_millis() as usize / 800) + 1).min(self.texturas.len());
+        if let Some(tex) = self.texturas.get(estados_alvo - 1) {
+            painter.image(
+                tex.id(),
+                img_rect,
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE,
+            );
         }
 
         let tempo = ui.input(|i| i.time) as f32;
-        for w in &widgets {
-            let hover = ui
-                .interact(w.rect, egui::Id::new(format!("w_{:?}", w.componente)), Sense::click())
-                .hovered();
-            let selecionado = self.selecionado == Some(w.componente);
-            let borda = if selecionado {
-                Stroke::new(2.0_f32, SEL)
-            } else {
-                Stroke::new(1.2_f32, PECA_BORDA)
-            };
-            let fill = if hover { PECA_HOVER } else { PECA };
-
-            painter.rect_filled(w.rect, 5.0, fill);
-            painter.rect_stroke(w.rect, 5.0, borda, egui::StrokeKind::Inside);
-
-            if let Some(u) = uso_do(st, w.componente) {
-                let altura = w.rect.height() * (u / 100.0).clamp(0.02, 1.0);
-                let faixa = Rect::from_x_y_ranges(
-                    w.rect.left() + 2.0..=w.rect.right() - 2.0,
-                    w.rect.bottom() - 2.0 - altura..=w.rect.bottom() - 2.0,
-                );
-                painter.rect_filled(faixa, 2.0, USO.gamma_multiply(0.55));
-            }
-
-            painter.text(
-                Pos2::new(w.rect.center().x, w.rect.top() + 12.0),
-                Align2::CENTER_TOP,
-                w.rotulo,
-                FontId::proportional(11.0),
-                TEXTO,
+        for h in HOTSPOTS {
+            let r = Rect::from_min_max(
+                Pos2::new(img_rect.left() + img_rect.width() * h.x0, img_rect.top() + img_rect.height() * h.y0),
+                Pos2::new(img_rect.left() + img_rect.width() * h.x1, img_rect.top() + img_rect.height() * h.y1),
             );
-
-            if st.ativos.contains(&w.componente) {
-                let centro = Pos2::new(w.rect.right() - 4.0, w.rect.top() + 4.0);
-                let raio = 9.0 + 2.0 * (tempo * 5.0).sin();
-                painter.circle_filled(centro, raio, ALERTA);
-                painter.text(
-                    centro,
-                    Align2::CENTER_CENTER,
-                    "!",
-                    FontId::proportional(14.0),
-                    Color32::WHITE,
-                );
+            let resp = ui.interact(r, egui::Id::new(format!("h_{:?}", h.componente)), Sense::click());
+            let selecionado = self.selecionado == Some(h.componente);
+            if selecionado || resp.hovered() {
+                let cor = if selecionado { SEL } else { Color32::from_rgba_unmultiplied(255, 255, 255, 180) };
+                painter.rect_stroke(r, 6.0, Stroke::new(if selecionado { 2.5_f32 } else { 1.5_f32 }, cor), egui::StrokeKind::Inside);
+            }
+            if resp.clicked() {
+                self.selecionado = Some(h.componente);
             }
 
-            let resp = ui.interact(w.rect, egui::Id::new(format!("c_{:?}", w.componente)), Sense::click());
-            if resp.clicked() {
-                self.selecionado = Some(w.componente);
+            if let Some(u) = uso_do(st, h.componente) {
+                let altura = r.height() * (u / 100.0).clamp(0.03, 1.0);
+                let faixa = Rect::from_min_max(
+                    Pos2::new(r.left(), r.bottom() - altura),
+                    Pos2::new(r.right(), r.bottom()),
+                );
+                painter.rect_filled(faixa, 3.0, USO.gamma_multiply(0.60));
+            }
+
+            if st.ativos.contains(&h.componente) {
+                let centro = Pos2::new(r.right(), r.top());
+                let raio = 10.0 + 2.5 * (tempo * 5.0).sin();
+                painter.circle_filled(centro, raio, ALERTA);
+                painter.text(centro, Align2::CENTER_CENTER, "!", FontId::proportional(15.0), Color32::WHITE);
             }
         }
 
+        let fundo = ui.interact(img_rect, egui::Id::new("fundo_placa"), Sense::click());
+        if fundo.clicked() {
+            self.selecionado = Some(Componente::Placa);
+        }
+
         painter.text(
-            Pos2::new(placa.right() - 10.0, placa.bottom() - 10.0),
-            Align2::RIGHT_BOTTOM,
+            Pos2::new(area.left() + 12.0, area.bottom() - 10.0),
+            Align2::LEFT_BOTTOM,
             &self.ident.board,
             FontId::proportional(11.0),
             TEXTO_FRACO,
