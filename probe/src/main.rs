@@ -66,8 +66,12 @@ fn main() {
         return;
     }
 
+    // WMI inicializa COM em modo MTA na thread chamadora; o winit exige STA na main.
+    // Isolamos a identificação numa thread própria pra não contaminar a thread principal.
     #[cfg(windows)]
-    let ident = win::identify::resumo();
+    let ident = std::thread::spawn(win::identify::resumo)
+        .join()
+        .unwrap_or_default();
     #[cfg(not(windows))]
     let ident = ident::Identificacao::default();
 
